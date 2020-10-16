@@ -19,7 +19,7 @@
 
 package org.elasticsearch.http.netty4;
 
-import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
+import static org.elasticsearch.env.Environment.PATH_HOME_SETTING;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_CREDENTIALS;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_HEADERS;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_METHODS;
@@ -46,8 +46,6 @@ import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_TCP_REUS
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_TCP_SEND_BUFFER_SIZE;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_PIPELINING_MAX_EVENTS;
 import static org.elasticsearch.http.netty4.cors.Netty4CorsHandler.ANY_ORIGIN;
-import static org.elasticsearch.env.Environment.PATH_HOME_SETTING;
-import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ENABLED;
 import static org.elasticsearch.node.Node.NODE_NAME_SETTING;
 
 import java.io.IOException;
@@ -57,7 +55,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -102,6 +99,7 @@ import org.elasticsearch.transport.BindTransportException;
 import org.elasticsearch.transport.netty4.Netty4OpenChannelsHandler;
 import org.elasticsearch.transport.netty4.Netty4Utils;
 
+import io.crate.netty.EventLoopGroups;
 import io.crate.plugin.PipelineRegistry;
 import io.crate.protocols.http.MainAndStaticFileHandler;
 import io.netty.bootstrap.ServerBootstrap;
@@ -114,9 +112,7 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.FixedRecvByteBufAllocator;
 import io.netty.channel.RecvByteBufAllocator;
 import io.netty.channel.epoll.Epoll;
-import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.http.HttpContentCompressor;
@@ -233,12 +229,15 @@ public class Netty4HttpServerTransport extends AbstractLifecycleComponent implem
 
     private final NodeClient nodeClient;
 
+    private final EventLoopGroups eventLoopGroups;
+
     public Netty4HttpServerTransport(Settings settings,
                                      NetworkService networkService,
                                      BigArrays bigArrays,
                                      ThreadPool threadPool,
                                      NamedXContentRegistry xContentRegistry,
                                      PipelineRegistry pipelineRegistry,
+                                     EventLoopGroups eventLoopGroups,
                                      NodeClient nodeClient) {
         Netty4Utils.setAvailableProcessors(EsExecutors.PROCESSORS_SETTING.get(settings));
         this.settings = settings;
@@ -247,6 +246,7 @@ public class Netty4HttpServerTransport extends AbstractLifecycleComponent implem
         this.threadPool = threadPool;
         this.xContentRegistry = xContentRegistry;
         this.pipelineRegistry = pipelineRegistry;
+        this.eventLoopGroups = eventLoopGroups;
         this.nodeClient = nodeClient;
 
         this.maxContentLength = SETTING_HTTP_MAX_CONTENT_LENGTH.get(settings);
@@ -293,13 +293,10 @@ public class Netty4HttpServerTransport extends AbstractLifecycleComponent implem
             this.serverOpenChannels = new Netty4OpenChannelsHandler(logger);
 
             serverBootstrap = new ServerBootstrap();
-
-            ThreadFactory threadFactory = daemonThreadFactory(settings, HTTP_SERVER_WORKER_THREAD_NAME_PREFIX);
+            serverBootstrap.group(eventLoopGroups.getEventLoopGroup(settings));
             if (Epoll.isAvailable()) {
-                serverBootstrap.group(new EpollEventLoopGroup(workerCount, threadFactory));
                 serverBootstrap.channel(EpollServerSocketChannel.class);
             } else {
-                serverBootstrap.group(new NioEventLoopGroup(workerCount, threadFactory));
                 serverBootstrap.channel(NioServerSocketChannel.class);
             }
 

@@ -28,6 +28,7 @@ import io.crate.action.sql.SQLOperations;
 import io.crate.auth.Authentication;
 import io.crate.auth.user.UserManager;
 import io.crate.netty.CrateChannelBootstrapFactory;
+import io.crate.netty.EventLoopGroups;
 import io.crate.protocols.ssl.SslConfigSettings;
 import io.crate.protocols.ssl.SslContextProvider;
 import io.crate.settings.CrateSetting;
@@ -87,6 +88,7 @@ public class PostgresNetty extends AbstractLifecycleComponent {
     private final String[] publishHosts;
     private final String port;
     private final Authentication authentication;
+    private final EventLoopGroups eventLoopGroups;
     private final Logger namedLogger;
     private final Settings settings;
     private final UserManager userManager;
@@ -102,12 +104,14 @@ public class PostgresNetty extends AbstractLifecycleComponent {
     @Nullable
     private Netty4OpenChannelsHandler openChannels;
 
+
     @Inject
     public PostgresNetty(Settings settings,
                          SQLOperations sqlOperations,
                          UserManager userManager,
                          NetworkService networkService,
                          Authentication authentication,
+                         EventLoopGroups eventLoopGroups,
                          SslContextProvider sslContextProvider) {
         this.settings = settings;
         this.userManager = userManager;
@@ -115,6 +119,7 @@ public class PostgresNetty extends AbstractLifecycleComponent {
         this.sqlOperations = sqlOperations;
         this.networkService = networkService;
         this.authentication = authentication;
+        this.eventLoopGroups = eventLoopGroups;
 
         if (SslConfigSettings.isPSQLSslEnabled(settings)) {
             namedLogger.info("PSQL SSL support is enabled.");
@@ -140,7 +145,7 @@ public class PostgresNetty extends AbstractLifecycleComponent {
         if (!enabled) {
             return;
         }
-        bootstrap = CrateChannelBootstrapFactory.newChannelBootstrap("postgres", settings);
+        bootstrap = CrateChannelBootstrapFactory.newChannelBootstrap(settings, eventLoopGroups);
         this.openChannels = new Netty4OpenChannelsHandler(LOGGER);
 
         bootstrap.childHandler(new ChannelInitializer<>() {

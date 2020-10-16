@@ -22,12 +22,10 @@ package org.elasticsearch.transport.netty4;
 import static org.elasticsearch.common.settings.Setting.byteSizeSetting;
 import static org.elasticsearch.common.settings.Setting.intSetting;
 import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.newConcurrentMap;
-import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Map;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.message.ParameterizedMessage;
@@ -50,6 +48,7 @@ import org.elasticsearch.transport.TcpTransport;
 import org.elasticsearch.transport.TransportSettings;
 
 import io.crate.common.SuppressForbidden;
+import io.crate.netty.EventLoopGroups;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.AdaptiveRecvByteBufAllocator;
@@ -64,10 +63,8 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.FixedRecvByteBufAllocator;
 import io.netty.channel.RecvByteBufAllocator;
 import io.netty.channel.epoll.Epoll;
-import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollServerSocketChannel;
 import io.netty.channel.epoll.EpollSocketChannel;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.logging.LogLevel;
@@ -109,6 +106,7 @@ public class Netty4Transport extends TcpTransport {
     private volatile Bootstrap clientBootstrap;
     private volatile EventLoopGroup eventLoopGroup;
     private final Map<String, ServerBootstrap> serverBootstraps = newConcurrentMap();
+    private final EventLoopGroups eventLoopGroups;
 
     public Netty4Transport(Settings settings,
                            Version version,
@@ -116,10 +114,12 @@ public class Netty4Transport extends TcpTransport {
                            NetworkService networkService,
                            BigArrays bigArrays,
                            NamedWriteableRegistry namedWriteableRegistry,
-                           CircuitBreakerService circuitBreakerService) {
+                           CircuitBreakerService circuitBreakerService,
+                           EventLoopGroups eventLoopGroups) {
         super(settings, version, threadPool, bigArrays, circuitBreakerService, namedWriteableRegistry, networkService);
         Netty4Utils.setAvailableProcessors(EsExecutors.PROCESSORS_SETTING.get(settings));
         this.workerCount = WORKER_COUNT.get(settings);
+        this.eventLoopGroups = eventLoopGroups;
 
         // See AdaptiveReceiveBufferSizePredictor#DEFAULT_XXX for default values in netty..., we can use higher ones for us, even fixed one
         this.receivePredictorMin = NETTY_RECEIVE_PREDICTOR_MIN.get(settings);
@@ -136,12 +136,7 @@ public class Netty4Transport extends TcpTransport {
     protected void doStart() {
         boolean success = false;
         try {
-            ThreadFactory threadFactory = daemonThreadFactory(settings, TRANSPORT_WORKER_THREAD_NAME_PREFIX);
-            if (Epoll.isAvailable()) {
-                eventLoopGroup = new EpollEventLoopGroup(workerCount, threadFactory);
-            } else {
-                eventLoopGroup = new NioEventLoopGroup(workerCount, threadFactory);
-            }
+            EventLoopGroup eventLoopGroup = eventLoopGroups.getEventLoopGroup(settings);
             clientBootstrap = createClientBootstrap(eventLoopGroup);
             if (NetworkService.NETWORK_SERVER.get(settings)) {
                 for (ProfileSettings profileSettings : profileSettings) {
